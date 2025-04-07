@@ -22,6 +22,9 @@ library(purrr)
 library(ggplot2)
 library(plm)
 library(stargazer)
+library(lmtest)
+library(lubridate)
+library(writexl)
 ```
 
 ## Including Plots
@@ -31,126 +34,311 @@ You can also embed plots, for example:
 ```{r}
 #Importing Data
 
-full_data <- read.csv("Large_data.csv")
+full_data <- read.csv("bonking.csv")
+loan_data <- read.csv("Loan.csv")
+more_bank_data <- read.csv("10_bank_data.csv")
+```
+
+
+
+```{r}
+full_data$date <- as.Date(full_data$date, format = "%Y-%m-%d")
 
 ```
 
 ```{r}
-model_1 <- lm(debt.to.equity.ratio ~TBTF, data=full_data)
-model_1
-
-model_2 <- lm(tan.leverage.ratio ~ TBTF, data= full_data)
-model_2
-
-
-model_3 <- lm(tier.1.capital.ratio ~ TBTF, data=full_data)
-model_3
-
-model_4 <- lm(net.charge.offs ~ TBTF, data=full_data)
-model_4
-
-stargazer(model_1, model_2, model_3, model_4, type="text", title="Analysis of TBTF", style="default", out="BinaryRegression.html")
+full_data$year <- format(full_data$date, "%Y")
 ```
 
 ```{r}
-#Summary statistics for banks debt-to-equity ratio
-summary(model_1)
+
+
+more_bank_data <- more_bank_data %>%
+  mutate(
+    date = as.Date(date),  
+    year = year(date),     
+    covid_dummy = ifelse(year %in% c(2020, 2021, 2022, 2023), 1, 0))
+```
+
+
+```{r}
+more_bank_data$equity_ratio <- more_bank_data$total.equity / (more_bank_data$total.equity + more_bank_data$total.debt)
+
 ```
 
 ```{r}
-#Summary statistics for tan leverage ratio
-summary(model_2)
+model_1 <- lm(net.charge.offs ~ TBTF, data=more_bank_data)
+
+model_2 <- lm(equity_ratio ~ TBTF, data=more_bank_data)
+
+model_4 <- lm(Tier.1.capital.ratio ~ TBTF, data=more_bank_data)
+
+model_5 <- lm(interest.rate ~ TBTF, data=more_bank_data)
+
+
+stargazer(model_1, model_2, model_4, model_5, title = "Preliminary Models", type = "text")
 ```
 
-```{r}
-summary(model_3)
-```
-
-```{r}
-model_4 <- lm(net.charge.offs ~ TBTF, data=full_data)
-summary(model_4)
-```
-
-```{r}
-#Formatting the date column in full_data
-full_data$date <- as.Date(full_data$date, format="%Y-%m-%d")
-```
-
-```{r}
-#Creating a line graph of each Bank for various variables
-
-ggplot(full_data, aes(x=date, y=debt.to.equity.ratio, color = Bank, group = Bank)) + 
-  geom_line()+
-  labs(x = "Dates", y = "Debt to Equity Ratio", title="Debt to Equity Ratio Over Time For TBTF Bank and Illinois Based Banks") + 
-  geom_line(size = 1) + 
-  theme_minimal() + 
-  theme(
-    text = element_text(size = 10), 
-    axis.text.x = element_text(angle = 45, hjust = 1),  
-    legend.position = "right",  
-    legend.title = element_text(size = 12),  
-    legend.text = element_text(size = 10)  
-  ) +
-  scale_x_date(date_breaks = "2 years", date_labels = "%Y") + 
-  scale_color_manual(values = c("red", "purple", "blue", "green", "orange", "pink"))  
-```
-
-```{r}
-ggplot(full_data, aes(x=date, y=risk.based.capital.ratio, color = Bank, group = Bank)) + 
-  geom_line()+
-  labs(x = "Dates", y = "Debt to Equity Ratio", title="Debt to Equity Ratio Over Time For TBTF Bank and Illinois Based Banks") + 
-  geom_line(size = 1) + 
-  theme_minimal() + 
-  theme(
-    text = element_text(size = 10), 
-    axis.text.x = element_text(angle = 45, hjust = 1),  
-    legend.position = "right",  
-    legend.title = element_text(size = 12),  
-    legend.text = element_text(size = 10)  
-  ) +
-  scale_x_date(date_breaks = "2 years", date_labels = "%Y") + 
-  scale_color_manual(values = c("red", "purple", "blue", "green", "orange", "pink")) 
-```
 
 ```{r}
 #Setting up panel data set
-full_data$Bank <- as.factor(full_data$Bank)
+more_bank_data$Bank <- as.factor(more_bank_data$Bank)
 ```
 
 ```{r}
 #Create panel data
-panel_data <- pdata.frame(full_data, index = c("date", "Bank"))
+more_bank_panel_data <- pdata.frame(more_bank_data, index = c("date", "Bank"))
 ```
 
 ```{r}
-#Creating the log of total assets variable
-panel_data$log.total.assets <- log(panel_data$total.assets)
+more_bank_panel_data$net_charge_to_loans <- more_bank_panel_data$net.charge.offs/more_bank_panel_data$total.loans
+more_bank_panel_data$roetbtf <- more_bank_panel_data$TBTF * more_bank_panel_data$ROE
 ```
 
 ```{r}
-#Pooling panel regression
-pool_model_npl <- plm(npl ~ log.total.assets + TBTF + debt.to.equity.ratio + return.on.asset + return.on.equity + tier.1.capital.ratio + risk.based.capital.ratio, data = panel_data, model="pooling")
-
-summary(pool_model_npl)
+more_bank_panel_data$debt.to.assets <- more_bank_panel_data$total.debt / more_bank_panel_data$total.assets
 ```
 
 ```{r}
-#Creating a fixed effect model
-fe_npl_model <- plm(npl ~ log.total.assets + TBTF + debt.to.equity.ratio + return.on.asset + return.on.equity + tier.1.capital.ratio + risk.based.capital.ratio, data = panel_data, model="within", effect="individual")
+interest.rate.model <- plm(interest.rate ~ TBTF + TBTF*net.charge.offs + ROA, data = more_bank_panel_data, method="between", effect="individual")
 
-summary(fe_npl_model)
+summary(interest.rate.model)
 ```
 
 ```{r}
-re_npl_model <- plm(npl ~ log.total.assets + TBTF + debt.to.equity.ratio + return.on.asset + return.on.equity + tier.1.capital.ratio + risk.based.capital.ratio, data = panel_data, model="random")
+stulz_model <- plm(net_charge_to_loans ~ TBTF + TBTF*log(total.assets) + ROA + roetbtf + TBTF*Tier.1.capital.ratio, data = more_bank_panel_data, method="between", effect="individual")
 
-summary(re_npl_model)
+summary(stulz_model)
+```
+```{r}
+crisis_period <- lm(total.equity ~ covid_dummy + TBTF*log(total.assets), data = more_bank_data)
+summary(crisis_period)
+
 ```
 
 ```{r}
-#Net charge off model
-model_netcharge <- plm(net.charge.offs ~ log.total.assets + TBTF + debt.to.equity.ratio + return.on.asset + return.on.equity + tier.1.capital.ratio + total.loans, data = panel_data, model="within", effect="individual")
-
-summary(model_netcharge)
-stargazer(model_netcharge, fe_npl_model, type="text", title="Analysis of TBTF", style="default", out="Fixed effect models")
+#Scaling net charge-offs and tier one capital ratio
+#panel_data <- panel_data %>% 
+  #mutate(scale.nco = net.charge.offs/total.assets,
+         #scale.tier.1 = Tier.1.capital.ratio/total.assets,
+         #scale.rbc = risk.based.capital.ratio/total.assets)
 ```
+
+bar plot of proportion loans 
+
+```{r}
+
+npl_model <- plm(NPL_tot_loans ~  TBTF + TBTF*log(total.assets) + ROA + roetbtf, data = more_bank_panel_data, model="within", effect="time")
+
+summary(npl_model)
+```
+
+
+```{r}
+net_charge_model <- plm(npl ~  ROA + log(total.assets) + interest.rate + TBTF*debt.to.equity + TBTF*loan.deposit.ratio, data = more_bank_panel_data, model="within", effect="time")
+
+summary(net_charge_model)
+```
+
+
+
+
+
+
+
+
+```{r}
+z_data <- more_bank_panel_data %>%
+  group_by(Bank) %>%
+  mutate(roa_mean = rollapply(ROA, width = 6, FUN = mean, fill = NA, align = "right"),
+  roa_sd = rollapply(ROA, width = 6, FUN = sd, fill = NA, align = "right"), z = (equity.assets.ratio + roa_mean)/roa_sd) %>%
+  ungroup()
+```
+
+```{r}
+#z-score model
+z_data_model <- z_data[-c(1:30), ]
+```
+
+```{r}
+z_model <- lm(
+  z ~ ROA + total.assets + Tier.1.capital.ratio + total.liabilities + 
+      NPL_tot_loans + npl + interest.rate,
+  data = z_data_model,  
+)
+
+summary(z_model)
+```
+```{r}
+nco_model <- plm(net.charge.offs ~ TBTF*loan.deposit.ratio + TBTF*debt.to.equity + Tier.1.capital.ratio + TBTF*tot_loans_tot_assets + Cost_to_income_ratio + operating.income + TBTF + total.debt, data = panel_data)
+
+summary(nco_model)
+```
+
+
+
+
+```{r}
+nplmodel <- plm(scale.npl ~ debt.to.equity+ loan.deposit.ratio + interest.rate + Tier.1.capital.ratio + ROA + ROE + tot_loans_tot_assets + Cost_to_income_ratio + operating.income + total.equity + TBTF, data = panel_data, method = "individual", effect="time")
+
+summary(nplmodel)
+```
+```{r}
+TBTF_banks <- full_data %>%
+  filter(TBTF == 1)
+```
+
+```{r}
+TBTF_banks <- pdata.frame(TBTF_banks, c("date", "Bank"))
+```
+
+```{r}
+TBTF_banks <- TBTF_banks %>%
+  select(-date)
+```
+
+```{r}
+TBTF_netchargeoffs <- plm(net.charge.offs ~  loan.deposit.ratio + total.equity + total.debt + Tier.1.capital.ratio + tot_loans_tot_assets + Cost_to_income_ratio + ROA + ROE + interest.rate, data=TBTF_banks, method = "within", effect="time")
+
+summary(TBTF_netchargeoffs)
+```
+```{r}
+
+small_banks <- full_data %>%
+  filter(TBTF == 0)
+```
+
+```{r}
+small_banks <- pdata.frame(small_banks, c("date", "Bank"))
+```
+
+```{r}
+small_banks <- small_banks %>%
+  select(-Bank, -TBTF, -date)
+```
+
+```{r}
+small_netchargeoffs <- plm(net.charge.offs ~ loan.deposit.ratio + total.equity + total.debt + Tier.1.capital.ratio + tot_loans_tot_assets + Cost_to_income_ratio + ROA + ROE + interest.rate, data=small_banks, method = "within", effect="time")
+
+summary(small_netchargeoffs) 
+```
+```{r}
+npl_modelo <- plm(npl ~  loan.deposit.ratio + total.equity + total.debt + Tier.1.capital.ratio + Cost_to_income_ratio + ROA + ROE, data=TBTF_banks, method = "within", effect="time")
+
+summary(npl_modelo)
+```
+```{r}
+npl_modelo_small <- plm(npl ~  loan.deposit.ratio + total.equity + total.debt + Tier.1.capital.ratio + Cost_to_income_ratio + ROA + ROE, data=small_banks, method = "individual", effect="time")
+
+summary(npl_modelo)
+```
+```{r}
+US_Bank_data <- panel_data %>%
+  filter(Bank == "US Bank") 
+```
+
+```{r}
+US_Bank_data <- US_Bank_data %>%
+  mutate(perc_loans_toassets = total.loans/total.assets,
+         other_assets = 1 - perc_loans_toassets)
+```
+
+```{r}
+US_Bank_data <- US_Bank_data %>%
+  group_by(year) %>%
+  summarise(mean_perc_loans_toassets = mean(perc_loans_toassets, na.rm=TRUE),
+            mean_other_assets = mean(other_assets, na.rm=TRUE))
+```
+
+```{r}
+JPM_data <- panel_data %>%
+  filter(Bank == "JPM") 
+```
+
+```{r}
+JPM_data <- JPM_data %>%
+  mutate(perc_loans_toassets = total.loans/total.assets,
+         other_assets = 1 - perc_loans_toassets)
+```
+
+```{r}
+JPM_data <- JPM_data %>%
+  group_by(year) %>%
+  summarise(mean_perc_loans_toassets = mean(perc_loans_toassets, na.rm=TRUE),
+            mean_other_assets = mean(other_assets, na.rm=TRUE))
+```
+
+```{r}
+Busey_data <- panel_data %>%
+  filter(Bank == "Busey") 
+```
+
+```{r}
+Busey_data <- Busey_data %>%
+  mutate(perc_loans_toassets = total.loans/total.assets,
+         other_assets = 1 - perc_loans_toassets)
+```
+
+```{r}
+Busey_data <- Busey_data %>%
+  group_by(year) %>%
+  summarise(mean_perc_loans_toassets = mean(perc_loans_toassets, na.rm=TRUE),
+            mean_other_assets = mean(other_assets, na.rm=TRUE))
+```
+
+```{r}
+NTRS_data <- panel_data %>%
+  filter(Bank == "Northern Trust") 
+```
+
+```{r}
+NTRS_data <- NTRS_data %>%
+  mutate(perc_loans_toassets = total.loans/total.assets,
+         other_assets = 1 - perc_loans_toassets)
+```
+
+```{r}
+NTRS_data <- NTRS_data %>%
+  group_by(year) %>%
+  summarise(mean_perc_loans_toassets = mean(perc_loans_toassets, na.rm=TRUE),
+            mean_other_assets = mean(other_assets, na.rm=TRUE))
+```
+
+```{r}
+Win_data <- panel_data %>%
+  filter(Bank == "Wintrust Financial") 
+```
+
+```{r}
+Win_data <- Win_data %>%
+  mutate(perc_loans_toassets = total.loans/total.assets,
+         other_assets = 1 - perc_loans_toassets)
+```
+
+```{r}
+Win_data <- Win_data %>%
+  group_by(year) %>%
+  summarise(mean_perc_loans_toassets = mean(perc_loans_toassets, na.rm=TRUE),
+            mean_other_assets = mean(other_assets, na.rm=TRUE))
+```
+
+
+```{r}
+write_xlsx(US_Bank_data, "US_Bank.xlsx")
+write_xlsx(JPM_data, "JPM.xlsx")
+write_xlsx(Busey_data, "Busey.xlsx")
+write_xlsx(NTRS_data, "NTRS.xlsx")
+write_xlsx(Win_data, "WIN.xlsx")
+```
+
+```{r}
+subset_data <- read.csv("BOA_subset.csv")
+```
+
+
+```{r}
+
+```
+
+
+
